@@ -1,0 +1,19 @@
+{
+  "mido": {
+    "salt": "2f4f7eeef65fd4cbdeb0037f",
+    "hash": "10d2fc0de441c65452c821074091592dfabc9e67cffdb4c601ce4effba651660",
+    "token": "ffaaea4003ffbe37e1bae8d1c6366074d377e1c5",
+    "data": {
+      "gold": 268,
+      "boats": [
+        0
+      ],
+      "level": 1,
+      "fishesCaught": 1,
+      "daily": {
+        "last": null,
+        "streak": 0
+      }
+    }
+  }
+}

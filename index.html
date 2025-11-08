@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>صايع بحر — الحرب والصيد (Online)</title>
+<style>
+  html,body{height:100%;margin:0;font-family:Tahoma,system-ui;background:#bfe7ff}
+  #uiTop{position:fixed;top:6px;left:6px;right:6px;display:flex;justify-content:space-between;z-index:40}
+  .hud{background:rgba(255,255,255,0.95);padding:8px 12px;border-radius:8px;display:flex;gap:12px;align-items:center;color:#033;font-weight:700}
+  #canvasWrap{position:fixed;inset:60px 6px 70px 6px;border-radius:10px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,0.12)}
+  canvas{width:100%;height:100%;display:block;background-size:cover;background-position:center bottom}
+  #controls{position:fixed;left:6px;right:6px;bottom:12px;display:flex;justify-content:space-between;z-index:40}
+  .btn{background:#107ab8;color:#fff;border:none;padding:10px 14px;border-radius:10px;font-weight:800;cursor:pointer}
+  #shopPanel,#popupCatch{position:fixed;z-index:80;left:50%;top:48%;transform:translate(-50%,-50%);background:rgba(255,255,255,0.98);padding:12px 14px;border-radius:12px;display:none;box-shadow:0 10px 30px rgba(0,0,0,0.25);max-width:90%}
+  .audio-btn{position:fixed;left:14px;bottom:14px;background:rgba(0,0,0,0.26);color:white;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;z-index:200;border:1px solid rgba(255,255,255,0.12);cursor:pointer}
+  .theme-btn{position:fixed;right:14px;bottom:14px;background:rgba(0,0,0,0.26);color:white;border-radius:50%;width:44px;height:44px;display:flex;align-items:center;justify-content:center;z-index:200;border:1px solid rgba(255,255,255,0.12);cursor:pointer}
+  #overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(rgba(0,0,0,0.35),rgba(0,0,0,0.25)); z-index:300; }
+  #loginBox { width:320px; background:rgba(255,255,255,0.98); padding:18px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.25); text-align:center }
+  input { width:100%; padding:10px; margin:8px 0; border-radius:8px; border:1px solid #ddd; font-size:16px }
+  button.primary { width:100%; padding:10px; border-radius:10px; border:none; background:#107ab8; color:white; font-weight:800; cursor:pointer }
+  @media(max-width:700px){ #uiTop{left:8px;right:8px} #controls{left:8px;right:8px;bottom:8px} }
+</style>
+</head>
+<body>
+  <!-- Login overlay -->
+  <div id="overlay">
+    <div id="loginBox">
+      <h2>صايع بحر</h2>
+      <div id="authMsg" style="color:#c33;margin-bottom:6px"></div>
+      <input id="username" placeholder="اسم المستخدم (مثال: mido)" />
+      <input id="password" placeholder="كلمة المرور" type="password" />
+      <button id="btnLogin" class="primary">تسجيل دخول</button>
+      <div style="height:8px"></div>
+      <button id="btnRegister" class="primary" style="background:#24a148">تسجيل حساب جديد</button>
+      <div style="height:10px"></div>
+      <div style="font-size:13px;color:#666">اضغط خارج النافذة للعب كزائر (لن تُحفظ البيانات على السيرفر)</div>
+    </div>
+  </div>
+
+  <div id="uiTop">
+    <div class="hud">💰 <span id="gold">0</span> &nbsp; | &nbsp; ⚡ <span id="energy">100%</span></div>
+    <div class="hud"><span id="status">الاتصال...</span> &nbsp; | &nbsp; <span id="userLabel">زائر</span></div>
+  </div>
+
+  <div id="canvasWrap"><canvas id="world"></canvas></div>
+
+  <div id="controls">
+    <button class="btn" id="btnFish">🎣 اصطياد / إطلاق</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="btnShop">🛒 المتجر</button>
+      <button class="btn" id="btnToggleTheme">🌙/☀️</button>
+    </div>
+  </div>
+
+  <div id="shopPanel"></div>
+  <div id="popupCatch"></div>
+  <div id="audioBtn" class="audio-btn" title="تشغيل/إيقاف الصوت">🔈</div>
+  <div id="themeBtn" class="theme-btn" title="تبديل نهار/ليل">🌙</div>
+
+  <!-- صوتيات (روابط عامة) -->
+  <audio id="bgMusic" loop crossorigin="anonymous">
+    <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_bda8e1b8b6.mp3?filename=relaxing-ocean-ambient-108164.mp3" type="audio/mpeg">
+  </audio>
+  <audio id="sfxCatch"><source src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_e0b2f8c9b4.mp3?filename=coin-collect-144229.mp3" type="audio/mpeg"></audio>
+  <audio id="sfxShoot"><source src="https://cdn.pixabay.com/download/audio/2021/12/15/audio_2c3b8b3c3a.mp3?filename=short-laser-6005.mp3" type="audio/mpeg"></audio>
+  <audio id="sfxExplode"><source src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_8c5f2c3f1f.mp3?filename=explosion-146873.mp3" type="audio/mpeg"></audio>
+
+  <script src="/socket.io/socket.io.js"></script>
+<script>
+/* =========== Client with auth, persistence, multiplayer =========== */
+const overlay = document.getElementById('overlay');
+const authMsg = document.getElementById('authMsg');
+const usernameEl = document.getElementById('username');
+const passwordEl = document.getElementById('password');
+const btnLogin = document.getElementById('btnLogin');
+const btnRegister = document.getElementById('btnRegister');
+
+let token = localStorage.getItem('sb_token') || null;
+let username = localStorage.getItem('sb_user') || null;
+
+const worldCanvas = document.getElementById('world');
+const ctx = worldCanvas.getContext('2d');
+const goldEl = document.getElementById('gold');
+const energyEl = document.getElementById('energy');
+const statusEl = document.getElementById('status');
+const userLabel = document.getElementById('userLabel');
+const shopPanel = document.getElementById('shopPanel');
+const popupCatch = document.getElementById('popupCatch');
+const audioBtn = document.getElementById('audioBtn');
+const bgMusic = document.getElementById('bgMusic');
+const sfxCatch = document.getElementById('sfxCatch');
+const sfxShoot = document.getElementById('sfxShoot');
+const sfxExplode = document.getElementById('sfxExplode');
+
+const WORLD_W = 1200, WORLD_H = 700;
+let cw,ch,scaleX,scaleY;
+function resize(){ const wrap = document.getElementById('canvasWrap'); cw = wrap.clientWidth; ch = wrap.clientHeight; worldCanvas.width = cw; worldCanvas.height = ch; scaleX = cw/WORLD_W; scaleY = ch/WORLD_H; }
+window.addEventListener('resize', resize); resize();
+
+let socket = null;
+let me = { id:null }, players = {}, fishes = [], bullets = [], boatsData = [], fishTypes = [], combinations = [];
+let theme = 'day', muted=false;
+
+/* images (realistic from Unsplash) */
+const bgLocal = '/background.png';
+const boatImages = {
+  0: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=160&q=80',
+  1: 'https://images.unsplash.com/photo-1507716222886-2f8e86f2b8e4?auto=format&fit=crop&w=180&q=80',
+  2: 'https://images.unsplash.com/photo-1493558103817-58b2924bce98?auto=format&fit=crop&w=180&q=80',
+  3: 'https://images.unsplash.com/photo-1501594907352-04cda38ebc29?auto=format&fit=crop&w=180&q=80',
+  4: 'https://images.unsplash.com/photo-1524678606370-a47ad25cb82a?auto=format&fit=crop&w=220&q=80',
+  5: 'https://images.unsplash.com/photo-1502877338535-766e1452684a?auto=format&fit=crop&w=220&q=80',
+  6: 'https://images.unsplash.com/photo-1533777324565-a040eb52fac2?auto=format&fit=crop&w=180&q=80'
+};
+const fishImages = {
+  0: 'https://images.unsplash.com/photo-1543353071-873f17a7a088?auto=format&fit=crop&w=160&q=80',
+  1: 'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=160&q=80',
+  2: 'https://images.unsplash.com/photo-1540614203-6a58f4e1aa3f?auto=format&fit=crop&w=160&q=80',
+  3: 'https://images.unsplash.com/photo-1562440499-64e7d9f8f2b1?auto=format&fit=crop&w=160&q=80',
+  4: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=160&q=80',
+  5: 'https://images.unsplash.com/photo-1520975681917-7b7d9d6d9b0b?auto=format&fit=crop&w=160&q=80',
+  6: 'https://images.unsplash.com/photo-1563298723-dcfebaa392e3?auto=format&fit=crop&w=160&q=80',
+  7: 'https://images.unsplash.com/photo-1549880338-65ddcdfd017b?auto=format&fit=crop&w=160&q=80',
+  8: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=160&q=80',
+  9: 'https://images.unsplash.com/photo-1504945005722-9d3d5d3d8aaf?auto=format&fit=crop&w=160&q=80',
+  10:'https://images.unsplash.com/photo-1497215842964-222b430dc094?auto=format&fit=crop&w=160&q=80',
+  11:'https://images.unsplash.com/photo-1506368249639-73a05d6f6488?auto=format&fit=crop&w=160&q=80'
+};
+
+function applyTheme(t){
+  theme = t;
+  worldCanvas.style.backgroundImage = `url(${bgLocal})`;
+  if(t==='night') worldCanvas.style.filter = 'brightness(0.6) saturate(0.9)'; else worldCanvas.style.filter = 'brightness(1)';
+}
+applyTheme('day');
+
+/* ---------- auth ---------- */
+btnRegister.addEventListener('click', async ()=>{
+  authMsg.textContent = '';
+  const u = usernameEl.value.trim(), p = passwordEl.value;
+  if(!u||!p){ authMsg.textContent = 'اكتب اسم وكلمة مرور'; return; }
+  const res = await fetch('/api/register',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({username:u,password:p})});
+  const j = await res.json();
+  if(!j.ok){ authMsg.textContent = 'فشل التسجيل: '+(j.err||''); return; }
+  token = j.token; username = u;
+  localStorage.setItem('sb_token', token); localStorage.setItem('sb_user', username);
+  startSocket();
+  overlay.style.display = 'none';
+});
+
+btnLogin.addEventListener('click', async ()=>{
+  authMsg.textContent = '';
+  const u = usernameEl.value.trim(), p = passwordEl.value;
+  if(!u||!p){ authMsg.textContent = 'اكتب اسم وكلمة مرور'; return; }
+  const res = await fetch('/api/login',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({username:u,password:p})});
+  const j = await res.json();
+  if(!j.ok){ authMsg.textContent = 'فشل تسجيل الدخول: '+(j.err||''); return; }
+  token = j.token; username = u;
+  localStorage.setItem('sb_token', token); localStorage.setItem('sb_user', username);
+  startSocket();
+  overlay.style.display = 'none';
+});
+
+overlay.addEventListener('click', (e)=>{ if(e.target===overlay){ overlay.style.display='none'; startSocket(); } });
+
+/* ---------- socket & game ---------- */
+function startSocket(){
+  const opts = token ? { auth: { token } } : {};
+  socket = io(opts);
+
+  socket.on('connect', ()=>{ statusEl.textContent='متصل'; me.id = socket.id; userLabel.textContent = username || 'زائر'; });
+  socket.on('disconnect', ()=>{ statusEl.textContent='انقطع'; });
+
+  socket.on('welcome', (d)=>{ boatsData = d.boatsData; fishTypes = d.fishTypes; combinations = d.combinations; });
+  socket.on('state', (s)=>{ players = s.players||{}; fishes = s.fishes||[]; bullets = s.bullets||[]; if(players[me.id]){ goldEl.textContent = Math.round(players[me.id].gold||0); energyEl.textContent = Math.round(players[me.id].energy||100)+'%'; } });
+
+  socket.on('caught', (d)=>{ showCatchPopup(d.fish); sfxCatch.currentTime=0; sfxCatch.play().catch(()=>{}); });
+  socket.on('buyResult', (r)=>{ if(r.ok) alert('تم الشراء!'); else if(r.reason==='funds') alert('لا تملك ذهب كافٍ'); else if(r.reason==='max') alert('وصلت الحد')});
+
+  // after connect, if logged send join info
+  socket.on('connect', ()=>{ if(token) socket.emit('join', { token }); else socket.emit('join', {}); });
+}
+
+/* ---------- controls ---------- */
+let pointer = { x: WORLD_W/2, y: WORLD_H/2 }, isDown = false;
+worldCanvas.addEventListener('pointerdown', e=>{ isDown=true; const r=worldCanvas.getBoundingClientRect(); pointer = clientToWorld(e.clientX-r.left,e.clientY-r.top); });
+worldCanvas.addEventListener('pointermove', e=>{ if(!isDown) return; const r=worldCanvas.getBoundingClientRect(); pointer = clientToWorld(e.clientX-r.left,e.clientY-r.top); });
+window.addEventListener('pointerup', ()=>isDown=false);
+
+setInterval(()=>{ if(socket && players[me.id]) socket.emit('update',{x:pointer.x,y:pointer.y,angle:0}); }, 80);
+
+document.getElementById('btnFish').addEventListener('click', ()=>{
+  const p = players[me.id]; if(!p) return;
+  let nearest = null, nd = Infinity;
+  for(const f of fishes){ const d = Math.hypot(p.x - f.x, p.y - f.y); if(d < nd){ nd = d; nearest = f; } }
+  if(nearest && nd < 120){ socket.emit('catchFish', nearest.id); sfxCatch.currentTime=0; sfxCatch.play().catch(()=>{}); }
+  else { socket.emit('shoot', { tx: pointer.x, ty: pointer.y }); sfxShoot.currentTime=0; sfxShoot.play().catch(()=>{}); }
+});
+
+document.getElementById('btnShop').addEventListener('click', ()=>{
+  shopPanel.innerHTML = `<div style="font-weight:900;margin-bottom:8px">🛒 المتجر</div>`;
+  (boatsData||[]).forEach(b=>{ if(b.id===0) return; const btn=document.createElement('button'); btn.className='btn'; btn.style.display='block'; btn.style.margin='8px 0'; btn.textContent=`اشتري ${b.name} — ${b.cost}💰`; btn.onclick=()=>socket.emit('buyBoat', b.id); shopPanel.appendChild(btn); });
+  shopPanel.style.display='block';
+});
+document.addEventListener('click', e=>{ if(!shopPanel.contains(e.target) && e.target.id!=='btnShop') shopPanel.style.display='none'; });
+
+function showCatchPopup(f){
+  popupCatch.style.display='block';
+  const name = (f && typeof f.type==='number' && fishTypes[f.type]) ? fishTypes[f.type].name : 'سمك';
+  const img = fishImages[f.type] || fishImages[0];
+  popupCatch.innerHTML = `<div style="font-weight:900">🐟 تم صيد: ${name}</div><img src="${img}" style="width:160px;height:90px;border-radius:8px;margin-top:8px"><div style="margin-top:8px">💰 +${f.reward} ذهب</div>`;
+  setTimeout(()=>popupCatch.style.display='none', 2000);
+}
+
+/* drawing */
+function draw(){
+  ctx.clearRect(0,0,worldCanvas.width,worldCanvas.height);
+
+  // fishes
+  for(const f of fishes){
+    const c = worldToClient(f.x,f.y);
+    ctx.beginPath(); ctx.arc(c.x,c.y,18,0,Math.PI*2); ctx.fillStyle='rgba(255,255,255,0.9)'; ctx.fill();
+    const img = new Image(); img.src = fishImages[f.type] || fishImages[0];
+    ctx.drawImage(img, c.x-22, c.y-12, 44, 28);
+  }
+
+  // bullets
+  for(const b of bullets){
+    const c = worldToClient(b.x,b.y);
+    ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(Math.atan2(b.vy,b.vx)); ctx.fillStyle='orange'; ctx.fillRect(-6,-3,12,6); ctx.restore();
+  }
+
+  // players
+  for(const id in players){
+    const p = players[id];
+    const c = worldToClient(p.x,p.y);
+    ctx.save(); ctx.translate(c.x,c.y);
+    const img = new Image(); const firstBoat = (p.boats && p.boats[0]) ? p.boats[0] : 0;
+    img.src = boatImages[firstBoat] || boatImages[0];
+    ctx.drawImage(img, -28, -28, 56, 56);
+    ctx.fillStyle='#013'; ctx.font='12px Tahoma'; ctx.textAlign='center'; ctx.fillText(p.name || 'لاعب', 0, 40);
+    ctx.restore();
+  }
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+worldCanvas.addEventListener('dblclick', e=>{
+  if(!socket) return;
+  const r = worldCanvas.getBoundingClientRect();
+  const wpt = clientToWorld(e.clientX-r.left,e.clientY-r.top);
+  socket.emit('shoot', { tx: wpt.x, ty: wpt.y });
+  sfxShoot.currentTime = 0; sfxShoot.play().catch(()=>{});
+});
+
+function clientToWorld(cx,cy){ return { x: cx/scaleX, y: cy/scaleY }; }
+function worldToClient(wx,wy){ return { x: wx*scaleX, y: wy*scaleY }; }
+
+/* theme + audio */
+document.getElementById('btnToggleTheme').addEventListener('click', ()=> applyTheme(theme==='day'?'night':'day'));
+audioBtn.addEventListener('click', ()=>{ muted = !muted; bgMusic.muted = muted; audioBtn.textContent = muted ? '🔇' : '🔈'; });
+bgMusic.volume = 0.45; bgMusic.play().catch(()=>{ /* autoplay may be blocked until interaction */ });
+
+/* auto-start if token exists */
+if(token){
+  overlay.style.display='none';
+  startSocket();
+}
+</script>
+</body>
+</html>
